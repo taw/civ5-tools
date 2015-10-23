@@ -1,0 +1,76 @@
+#!/usr/bin/env ruby
+
+require "digest/sha1"
+require "set"
+require "pathname"
+
+class Pathname
+  def sha1
+    Digest::SHA1.hexdigest(read)
+  end
+end
+
+class ModCompatibility
+  def initialize(path)
+    @path = Pathname(path)
+    @files = {}
+    @conflicts = {}
+  end
+
+  def add_mod!(mod_dir)
+    mod_name = mod_dir.basename.to_s
+    mod_dir.find.select(&:file?).each do |file_path|
+      rel_path = file_path.relative_path_from(mod_dir)
+      @files[rel_path] ||= Set[]
+      @files[rel_path] << mod_name
+    end
+  end
+
+  def add_files!
+    @path.children.each do |mod_dir|
+      unless mod_dir.directory?
+        warn "#{mod_dir} is not directory"
+        next
+      end
+      add_mod!(mod_dir)
+    end
+  end
+
+  def analyze_potential_conflict!(path, mods)
+    shas = {}
+    mods.each do |mod|
+      shas[mod] = (@path + mod + path).sha1
+    end
+    mods.each do |m1|
+      mods.each do |m2|
+        # alphabetical, but whateever
+        next unless m1 < m2
+        next if shas[m1] == shas[m2]
+        @conflicts[[m1, m2]] ||= []
+        @conflicts[[m1, m2]] << path
+      end
+    end
+  end
+
+  def analyze_potential_conflicts!
+    @files.each do |path, mods|
+      analyze_potential_conflict!(path, mods) unless mods.size == 1
+    end
+    @conflicts.each do |(m1,m2),files|
+      puts "Mods `#{m1}' and `#{m2}' conflict:"
+      puts files.map{|x| "* #{x}"}
+    end
+  end
+
+  def run!
+    add_files!
+    analyze_potential_conflicts!
+  end
+end
+
+if ARGV.size != 1
+  STDERR.puts "Usage: #{$0} path_to_mods_directory"
+  exit 1
+end
+
+ModCompatibility.new(ARGV[0]).run!
