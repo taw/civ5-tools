@@ -3,10 +3,15 @@
 require "digest/sha1"
 require "set"
 require "pathname"
+require "shellwords"
 
 class Pathname
   def sha1
     Digest::SHA1.hexdigest(read)
+  end
+
+  def shellescape
+    to_s.shellescape
   end
 end
 
@@ -17,22 +22,37 @@ class ModCompatibility
     @conflicts = {}
   end
 
-  def add_mod!(mod_dir)
+  def add_file!(mod_name, rel_path)
+    @files[rel_path] ||= Set[]
+    @files[rel_path] << mod_name
+  end
+
+  def add_mod_dir!(mod_dir)
     mod_name = mod_dir.basename.to_s
     mod_dir.find.select(&:file?).each do |file_path|
-      rel_path = file_path.relative_path_from(mod_dir)
-      @files[rel_path] ||= Set[]
-      @files[rel_path] << mod_name
+      add_file! mod_name, file_path.relative_path_from(mod_dir)
+    end
+  end
+
+  def add_mod_pack!(mod_file)
+    mod_name = mod_file.basename(".civ5mod").to_s
+    `7za l -slt #{mod_file.shellescape}`.split(/\n\n/).grep(/^Path = /)[1..-1].each do |file_info|
+      file_path = file_info[/^Path = (.*)/, 1]
+      next if file_info =~ /^Attributes = D/
+      add_file! mod_name, file_path
     end
   end
 
   def add_files!
-    @path.children.each do |mod_dir|
-      unless mod_dir.directory?
-        warn "#{mod_dir} is not directory"
+    @path.children.each do |mod|
+      if mod.directory?
+        add_mod_dir!(mod)
+      elsif mod.file? and mod.extname == ".civ5mod"
+        add_mod_pack!(mod)
+      else
+        warn "#{mod_dir} is not directory or .civ5mod file"
         next
       end
-      add_mod!(mod_dir)
     end
   end
 
